@@ -432,7 +432,7 @@ def constant(x, name=None, ndim=None, dtype=None):
         return ret
     sig = ret.signature()
     if (sig not in constant_cache and ret.data.size == 1 and
-        ret.data <= 10 and ret.data >= -10 and
+        (-10) <= ret.data <= 10 and
         (ret.dtype in int_dtypes or ret.dtype in uint_dtypes or
          (ret.dtype in float_dtypes and int(ret.data) == ret.data))):
         constant_cache[sig] = ret
@@ -764,11 +764,11 @@ def get_scalar_constant_value(orig_v, elemwise=True,
                     if not (idx < len(gp_broadcastable)):
                         msg = ("get_scalar_constant_value detected " +
                                "deterministic IndexError: x.shape[%d] " +
-                               "when x.ndim=%d.") % (ndim, idx)
+                               "when x.ndim=%d.") % (idx, ndim)
                         if config.exception_verbosity == 'high':
-                            msg += 'x=%s' % min_informative_str(v)
+                            msg += ' x=%s' % min_informative_str(v)
                         else:
-                            msg += 'x=%s' % str(v)
+                            msg += ' x=%s' % str(v)
                         raise ValueError(msg)
 
                     if gp_broadcastable[idx]:
@@ -3907,6 +3907,14 @@ class Join(Op):
             assert shp is not None
             assert len(shp) == n_dim
 
+        # The joining dimension could be negative, but we need it to be
+        # in [0, n_dim) in the loop below.
+        # An axis < -n_dim or >= ndim would be invalid, but this is
+        # not checked here. An Assert op would be a way of addressing that,
+        # but it may disrupt optimizations.
+        join_dim = switch(ge(node.inputs[0], 0),
+                          node.inputs[0],
+                          node.inputs[0] + n_dim)
         out_shapes = []
         for dim in xrange(n_dim):
             # we have to deal with 2 possible cases in here :
@@ -3924,7 +3932,7 @@ class Join(Op):
             for shp in ishapes[2:]:
                 t_side = t_side + shp[dim]
             # return the dimensions found
-            out_shapes.append(switch(eq(dim, node.inputs[0]),
+            out_shapes.append(switch(eq(dim, join_dim),
                               t_side, f_side))
 
         return [tuple(out_shapes)]
@@ -3960,7 +3968,7 @@ pprint.assign(lambda pstate, r: r.owner and isinstance(r.owner.op, Join),
 
 def roll(x, shift, axis=None):
     """
-    Convenience function to roll `TensorType`s along the given axis.
+    Convenience function to roll TensorTypes along the given axis.
 
     Syntax copies numpy.roll function.
 
@@ -3978,7 +3986,7 @@ def roll(x, shift, axis=None):
     Returns
     -------
     tensor
-        Output tensor, with the same shape as `x`.
+        Output tensor, with the same shape as ``x``.
 
     """
     if axis is None:
@@ -4222,7 +4230,8 @@ def get_vector_length(v):
     """
     v = as_tensor_variable(v)
     if v.ndim != 1:
-        raise TypeError('argument must be symbolic vector')
+        raise TypeError("argument must be symbolic vector, got '%s'" %
+                        v)
     if v.type.broadcastable[0]:
         return 1
     if isinstance(v, gof.Constant) and v.type.ndim == 1:
@@ -4392,6 +4401,11 @@ class Reshape(Op):
         # Here, we only simplify if the shape (node.inputs[1]) is a constant,
         # ideally it would suffice to check that it is always non-negative.
 
+        # If current variable is a scalar and its dimensionality should
+        # change to self.ndim, then use size 1 for all new dimensions.
+        if len(ishapes[0]) == 0:
+            return [(1,) * self.ndim]
+
         requ = node.inputs[1]
         if isinstance(requ, theano.tensor.TensorConstant):
             requ = list(requ.data)
@@ -4409,17 +4423,12 @@ class Reshape(Op):
                                  ' must have at most one entry equal to -1')
             return [requ]
         else:
-            oshape = []
-            for i in xrange(self.ndim):
-                default_os_i = theano.tensor.opt.Shape_i(i)(node.outputs[0])
-                try:
-                    os_i = get_scalar_constant_value(node.inputs[1][i]).item()
-                    if os_i == -1:
-                        os_i = default_os_i
-                except NotScalarConstantError:
-                    os_i = default_os_i
-                oshape.append(os_i)
-            return [tuple(oshape)]
+            new_dims = [node.inputs[1][i] for i in xrange(self.ndim)]
+            return [tuple([switch(eq(new_dims[i], -1),
+                                  theano.tensor.mul(*ishapes[0]) //
+                                  (-theano.tensor.mul(*new_dims)),
+                                  new_dims[i])
+                           for i in xrange(self.ndim)])]
 
     def c_code_cache_version(self):
         return (6,)
@@ -4471,6 +4480,11 @@ class Reshape(Op):
 
 def reshape(x, newshape, ndim=None, name=None):
     if ndim is None:
+        newshape = as_tensor_variable(newshape)
+        if newshape.ndim != 1:
+            raise TypeError(
+                "New shape in reshape must be a vector or a list/tuple of"
+                " scalar. Got %s after conversion to a vector." % newshape)
         try:
             ndim = get_vector_length(newshape)
         except ValueError:

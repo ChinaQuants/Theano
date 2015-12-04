@@ -449,10 +449,14 @@ AddConfigVar(
 AddConfigVar(
     'traceback.limit',
     "The number of stack to trace. -1 mean all.",
-    # We default to 6 to be able to know where v1 + v2 is created in the
+    # We default to a number to be able to know where v1 + v2 is created in the
     # user script. The bigger this number is, the more run time it takes.
-    # We need to default to 7 to support theano.tensor.tensor(...).
-    IntParam(7),
+    # We need to default to 8 to support theano.tensor.tensor(...).
+    # import theano, numpy
+    # X = theano.tensor.matrix()
+    # y = X.reshape((5,3,1))
+    # assert y.tag.trace
+    IntParam(8),
     in_c_key=False)
 
 AddConfigVar('experimental.mrg',
@@ -640,6 +644,16 @@ AddConfigVar(
     in_c_key=False)
 
 
+AddConfigVar(
+    'print_test_value',
+    ("If 'True', the __eval__ of a Theano variable will return its test_value "
+     "when this is available. This has the practical conseguence that, e.g., "
+     "in debugging `my_var` will print the same as `my_var.tag.test_value` "
+     "when a test value is defined."),
+    BoolParam(False),
+    in_c_key=False)
+
+
 AddConfigVar('compute_test_value_opt',
              ("For debugging Theano optimization only."
               " Same as compute_test_value, but is used"
@@ -744,3 +758,20 @@ AddConfigVar(
     "the first optimization, and could possibly still contains some bugs. "
     "Use at your own risks.",
     BoolParam(False))
+
+
+def good_seed_param(seed):
+    if seed == "random":
+        return True
+    try:
+        int(seed)
+    except Exception:
+        return False
+    return True
+
+
+AddConfigVar('unittests.rseed',
+             "Seed to use for randomized unit tests. "
+             "Special value 'random' means using a seed of None.",
+             StrParam(666, is_valid=good_seed_param),
+             in_c_key=False)

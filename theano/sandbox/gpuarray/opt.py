@@ -51,7 +51,7 @@ conv_groupopt = LocalGroupDB()
 conv_groupopt.__name__ = "gpua_conv_opts"
 
 gpu_seqopt.register('gpuarray_local_optimiziations', gpu_optimizer, 1,
-                    'fast_compile', 'fast_run', 'inplace', 'gpuarray')
+                    'fast_compile', 'fast_run', 'gpuarray')
 gpu_seqopt.register('gpuarray_cut_transfers', gpu_cut_copies, 2,
                     'fast_compile', 'fast_run', 'gpuarray')
 
@@ -129,18 +129,16 @@ def op_lifter(OP, cuda_only=False):
                      get_context(context_name).kind != 'cuda')):
                     return False
 
+                # tag the inputs with the context in case
+                # the context was derived from the outputs
+                for i in node.inputs:
+                    i.tag.context_name = context_name
                 new_op = maker(node, context_name)
                 # This is needed as sometimes new_op inherits from OP.
                 if new_op and new_op != node.op:
                     if isinstance(new_op, theano.Op):
-                        # tag the inputs with the context in case
-                        # the context was derived from the outputs
-                        def tag(i, ctx):
-                            i.tag.context_name = ctx
-                            return i
-                        inputs = [tag(i, context_name) for i in node.inputs]
                         return [safe_to_cpu(o) for o in
-                                new_op(*inputs, return_list=True)]
+                                new_op(*node.inputs, return_list=True)]
                     elif isinstance(new_op, (tuple, list)):
                         return [safe_to_cpu(o) for o in new_op]
                     else:  # suppose it is a variable on the GPU
@@ -361,9 +359,9 @@ def local_gpu_elemwise(node, context_name):
         for inp in node.inputs:
             if inp.dtype != out_dtype:
                 gpu_cast_op = GpuElemwise(Cast(Scalar(out_dtype)))
-                new_inputs.append(gpu_cast_op(as_gpuarray_variable(inp)))
+                new_inputs.append(gpu_cast_op(as_gpuarray_variable(inp, context_name)))
             else:
-                new_inputs.append(as_gpuarray_variable(inp))
+                new_inputs.append(as_gpuarray_variable(inp, context_name))
 
         # Perform the exponent on the gpu and transfer the output back to the
         # cpu.
@@ -593,11 +591,11 @@ def local_gpua_advanced_incsubtensor(node, context_name):
     compute_capability = device_properties(active_device_no)['major']
 
     if (compute_capability < 2 or x.ndim != 2 or y.ndim != 2):
-        return [GpuAdvancedIncSubtensor1(
-                set_instead_of_inc=set_instead_of_inc)(x, y, ilist)]
+        return GpuAdvancedIncSubtensor1(
+            set_instead_of_inc=set_instead_of_inc)
     else:
-        return [GpuAdvancedIncSubtensor1_dev20(
-                set_instead_of_inc=set_instead_of_inc)(x, y, ilist)]
+        return GpuAdvancedIncSubtensor1_dev20(
+            set_instead_of_inc=set_instead_of_inc)
 
 
 @register_opt('fast_compile')
@@ -621,7 +619,6 @@ def local_gpua_careduce(node, context_name):
             node.op.scalar_op, axis=node.op.axis,
             dtype=getattr(node.op, 'dtype', None),
             acc_dtype=getattr(node.op, 'acc_dtype', None))
-        x.tag.context_name = context_name
         gvar = greduce(x)
         # We need to have the make node called, otherwise the mask can
         # be None
@@ -867,12 +864,13 @@ def local_gpu_elemwise_careduce(node):
             isinstance(node.inputs[0].owner.op, GpuElemwise) and
             # The Op support all scalar with 1 inputs.  We don't
             # automatically add more case, as some like trigonometic
-            # operation with some reduction pattern will probably result
-            # to slow down.
+            # operation with some reduction pattern will probably results
+            # in slow down.
             isinstance(node.inputs[0].owner.op.scalar_op, scalar.basic.Sqr)):
         op = node.op
         inp = node.inputs[0].owner.inputs[0]
         return [GpuCAReduceCuda(scalar_op=op.scalar_op,
+                                axis=op.axis,
                                 reduce_mask=op.reduce_mask,
                                 pre_scalar_op=scalar.basic.sqr)(inp)]
 
