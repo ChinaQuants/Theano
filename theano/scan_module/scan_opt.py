@@ -693,12 +693,9 @@ class PushOutScanOutput(gof.Optimizer):
         args = scan_args(node.inputs, node.outputs,
                          op.inputs, op.outputs, op.info)
 
-        local_fgraph = gof.FunctionGraph(args.inner_inputs,
-                                         args.inner_outputs,
-                                         clone=False)
-
         new_scan_node = None
-        local_fgraph_topo = local_fgraph.toposort()
+        local_fgraph_topo = theano.gof.graph.io_toposort(op.inputs, op.outputs)
+
         for nd in local_fgraph_topo:
             if (isinstance(nd.op, theano.tensor.Dot) and
                     nd.out in args.inner_out_nit_sot):
@@ -860,7 +857,6 @@ class PushOutScanOutput(gof.Optimizer):
                             reason="scanOp_pushout_output")
 
                         break
-
         return new_scan_node
 
     def inner_sitsot_only_last_step_used(self, var, scan_args):
@@ -930,7 +926,7 @@ class PushOutScanOutput(gof.Optimizer):
         # For the inner_vars that don't already exist in the outer graph, add
         # them as new nitsot outputs to the scan node.
         idx_add_as_nitsots = [i for i in range(len(outer_vars))
-                              if outer_vars[i] == None]
+                              if outer_vars[i] is None]
         add_as_nitsots = [inner_vars[idx] for idx in idx_add_as_nitsots]
 
         if len(add_as_nitsots) > 0:
