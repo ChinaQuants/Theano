@@ -92,13 +92,6 @@ whitelist_flake8 = [
     "tensor/nnet/tests/test_sigm.py",
     "scalar/__init__.py",
     "scalar/tests/test_basic.py",
-    "sandbox/__init__.py",
-    "sandbox/rng_mrg.py",
-    "sandbox/theano_object.py",
-    "sandbox/scan.py",
-    "sandbox/symbolic_module.py",
-    "sandbox/conv.py",
-    "sandbox/debug.py",
     "sandbox/tests/test_theano_object.py",
     "sandbox/tests/test_scan.py",
     "sandbox/tests/test_neighbourhoods.py",
@@ -156,12 +149,6 @@ whitelist_flake8 = [
     "scan_module/__init__.py",
     "scan_module/tests/test_scan.py",
     "scan_module/tests/test_scan_opt.py",
-    "misc/tests/test_may_share_memory.py",
-    "misc/tests/test_pycuda_theano_simple.py",
-    "misc/tests/test_gnumpy_utils.py",
-    "misc/tests/test_pycuda_utils.py",
-    "misc/tests/test_cudamat_utils.py",
-    "misc/tests/test_pycuda_example.py",
     "misc/hooks/reindent.py",
     "misc/hooks/check_whitespace.py",
     "sparse/__init__.py",
@@ -176,9 +163,7 @@ whitelist_flake8 = [
     "gof/unify.py",
     "gof/__init__.py",
     "gof/sandbox/equilibrium.py",
-    "d3viz/__init__.py",
-    "d3viz/tests/test_d3viz.py",
-    "d3viz/tests/test_formatting.py"
+    "d3viz/__init__.py"
 ]
 
 
