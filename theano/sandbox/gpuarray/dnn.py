@@ -1,6 +1,8 @@
 import os
-import numpy
 import warnings
+
+import numpy
+from six import integer_types
 
 import theano
 from theano import Op, Apply, tensor, config, Variable
@@ -172,7 +174,7 @@ class DnnBase(COp):
         return [config.dnn.library_path]
 
     def c_compile_args(self):
-        return ['-rpath', config.dnn.library_path]
+        return ['-Wl,-rpath,' + config.dnn.library_path]
 
     def c_code_cache_version(self):
         return (super(DnnBase, self).c_code_cache_version(), version())
@@ -194,7 +196,7 @@ class DnnVersion(Op):
         return [config.dnn.library_path]
 
     def c_compile_args(self):
-        return ['-rpath', config.dnn.library_path]
+        return ['-Wl,-rpath,' + config.dnn.library_path]
 
     def c_support_code(self):
         return """
@@ -281,7 +283,7 @@ class GpuDnnConvDesc(COp):
                  precision="float32"):
         COp.__init__(self, ["conv_desc.c"], "APPLY_SPECIFIC(conv_desc)")
 
-        if isinstance(border_mode, int):
+        if isinstance(border_mode, integer_types):
             border_mode = (border_mode,) * len(subsample)
         if isinstance(border_mode, tuple):
             assert len(border_mode) == len(subsample)
