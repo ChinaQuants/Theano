@@ -2,7 +2,7 @@
 WRITEME
 
 """
-from __future__ import print_function
+from __future__ import absolute_import, print_function, division
 from copy import copy, deepcopy
 from sys import getsizeof
 import sys
@@ -157,6 +157,9 @@ def raise_with_op(node, thunk=None, exc_info=None, storage_map=None):
         detailed_err_msg += ("Inputs shapes: %s" % shapes +
                              "\nInputs strides: %s" % strides +
                              "\nInputs values: %s" % scalar_values)
+        if theano.config.exception_verbosity == 'high':
+            detailed_err_msg += "\nInputs type_num: %s" % str(
+                [getattr(getattr(i[0], 'dtype', ''), 'num', '') for i in thunk.inputs])
         if hasattr(node.op, '__input_name__'):
             detailed_err_msg += "\nInputs name: %s\n" % str(node.op.__input_name__)
 

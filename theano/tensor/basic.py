@@ -1,4 +1,6 @@
 """A `Type` and `Op` classes to work with numpy.ndarrays symbolically."""
+from __future__ import absolute_import, print_function, division
+
 from six.moves import builtins
 import sys
 import warnings
@@ -136,13 +138,13 @@ def as_tensor_variable(x, name=None, ndim=None):
         If a new `Variable` instance is created, it will be named with this
         string.
     ndim : None or integer
-        Return a Variable with this many dimensions. Raise TypeError if it's
-        not possible.
+        Return a Variable with this many dimensions.
 
     Raises
     ------
     ValueError
-        If an `Apply` with more than one output is fetched.
+        If an `Apply` with more than one output is fetched or
+        if `x` cannot be made into a Variable with `ndim` dimensions.
     AsTensorError
         If `x` cannot be converted to a TensorType Variable.
 
@@ -588,6 +590,8 @@ def get_scalar_constant_value(orig_v, elemwise=True,
     ----------
     elemwise : bool
         If False, we won't try to go into elemwise. So this call is faster.
+        But we still investigate in Second Elemwise (as this is a substitute
+        for Alloc)
     only_process_constants : bool
         If True, we only attempt to obtain the value of `orig_v` if it's
         directly constant and don't try to dig through dimshuffles, fills,
@@ -610,14 +614,14 @@ def get_scalar_constant_value(orig_v, elemwise=True,
             return numpy.asarray(v)
 
         if isinstance(v, numpy.ndarray):
-            return numpy_scalar(v)
+            return numpy_scalar(v).copy()
 
         if isinstance(v, Constant):
             if getattr(v.tag, 'unique_value', None) is not None:
                 data = v.tag.unique_value
             else:
                 data = v.data
-            return numpy_scalar(data)
+            return numpy_scalar(data).copy()
 
         if not only_process_constants and getattr(v, 'owner', None):
             if isinstance(v.owner.op, (Alloc, DimShuffle, Rebroadcast,
@@ -647,26 +651,30 @@ def get_scalar_constant_value(orig_v, elemwise=True,
                              for i in v.owner.inputs]
                     ret = [[None]]
                     v.owner.op.perform(v.owner, const, ret)
-                    return ret[0][0]
-            elif elemwise and isinstance(v.owner.op, Elemwise):
+                    return ret[0][0].copy()
+            # In fast_compile, we don't enable local_fill_to_alloc, so
+            # we need to investigate Second as Alloc. So elemwise
+            # don't disable the check for Second.
+            elif isinstance(v.owner.op, Elemwise):
                 if isinstance(v.owner.op.scalar_op, scal.Second):
                     # We don't need both input to be constant for second
                     shp, val = v.owner.inputs
                     v = val
                     continue
-                elif isinstance(v.owner.op.scalar_op,
-                                get_scalar_constant_value_elemwises):
+                elif elemwise and isinstance(
+                        v.owner.op.scalar_op,
+                        get_scalar_constant_value_elemwises):
                     const = [get_scalar_constant_value(i)
                              for i in v.owner.inputs]
                     ret = [[None]]
                     v.owner.op.perform(v.owner, const, ret)
-                    return ret[0][0]
+                    return ret[0][0].copy()
             elif (isinstance(v.owner.op, theano.tensor.subtensor.Subtensor) and
                   v.ndim == 0):
                 if isinstance(v.owner.inputs[0], TensorConstant):
                     cdata = tuple(v.owner.op.get_constant_idx(v.owner.inputs))
                     try:
-                        return v.owner.inputs[0].data.__getitem__(cdata)
+                        return v.owner.inputs[0].data.__getitem__(cdata).copy()
                     except IndexError:
                         raise IndexError(
                             str(tuple(v.owner.op.idx_list)) +
@@ -1397,8 +1405,6 @@ class MaxAndArgmax(Op):
         %(axis_code)s
         %(max)s = (PyArrayObject*)PyArray_Max(%(x)s, axis, NULL);
         if(%(max)s == NULL){
-            PyErr_SetString(PyExc_ValueError,
-                         "MaxAndArgmax, max failed");
             %(fail)s;
         }
         if(!PyArray_CheckExact(%(max)s)){
@@ -1410,7 +1416,6 @@ class MaxAndArgmax(Op):
 
         %(argmax)s = (PyArrayObject*)PyArray_ArgMax(%(x)s, axis, NULL);
         if(%(argmax)s == NULL){
-            PyErr_SetString(PyExc_ValueError, "MaxAndArgmax, argmax failed");
             Py_CLEAR(%(max)s);
             %(fail)s;
         }
@@ -1432,7 +1437,7 @@ class MaxAndArgmax(Op):
         return ret % locals()
 
     def c_code_cache_version(self):
-        return (3,)
+        return (4,)
 
     def infer_shape(self, node, shapes):
         ishape, axis_shape = shapes
@@ -4462,14 +4467,15 @@ class Reshape(Op):
             return [requ]
         else:
             new_dims = [node.inputs[1][i] for i in xrange(self.ndim)]
-            # since new_dims has one negative value (-1), the
+            # since new_dims can have negative value (-1), the
             # multiplication of all values should be negated
             # to give a positive value.
             # To avoid optimization complexity, we avoid checking
             # for the case when there are two or more '-1' values.
+            if self.ndim:
+                rest_size = (mul(*ishapes[0]) // -mul(*new_dims))
             return [tuple([switch(eq(new_dims[i], -1),
-                                  theano.tensor.mul(*ishapes[0]) //
-                                  (-theano.tensor.mul(*new_dims)),
+                                  rest_size,
                                   new_dims[i])
                            for i in xrange(self.ndim)])]
 
@@ -6216,7 +6222,7 @@ class AllocEmpty(gof.Op):
 
     # specify the type of the data
     def __init__(self, dtype):
-        assert isinstance(dtype, str)
+        assert isinstance(dtype, str), dtype
         self.dtype = dtype.lower()
 
     def validate_shape(self, shape):

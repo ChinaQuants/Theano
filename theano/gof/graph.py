@@ -5,7 +5,7 @@ To read about what theano graphs are from a user perspective, have a look at
 `graph.html <../doc/graph.html>`__.
 
 """
-from __future__ import print_function
+from __future__ import absolute_import, print_function, division
 
 from collections import deque
 from copy import copy
@@ -819,7 +819,7 @@ def clone_get_equiv(inputs, outputs, copy_inputs_and_orphans=True, memo=None):
     original graph to a new node (a clone) in a new graph.
 
     This function works by recursively cloning inputs... rebuilding a directed
-    graph from the bottom (inputs) up to eventually building new outputs.
+    graph from the inputs up to eventually building new outputs.
 
     Parameters
     ----------

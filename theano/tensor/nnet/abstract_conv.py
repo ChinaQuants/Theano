@@ -1,8 +1,8 @@
 """
 Abstract conv interface
 """
+from __future__ import absolute_import, print_function, division
 
-import numpy as np
 import logging
 from six import reraise, integer_types
 import sys
@@ -17,6 +17,8 @@ from six.moves import xrange
 
 import warnings
 import numpy
+import numpy as np
+
 try:
     from scipy.signal.signaltools import _valfrommode, _bvalfromboundary
     from scipy.signal.sigtools import _convolve2d
@@ -223,7 +225,7 @@ def conv2d_grad_wrt_inputs(output_grad,
     Notes
     -----
 
-    :note: If CuDNN is available, it will be used on the
+    :note: If cuDNN is available, it will be used on the
         GPU. Otherwise, it is the *CorrMM* convolution that will be used
         "caffe style convolution".
 
@@ -346,7 +348,7 @@ def conv2d_grad_wrt_weights(input,
     Notes
     -----
 
-    :note: If CuDNN is available, it will be used on the
+    :note: If cuDNN is available, it will be used on the
         GPU. Otherwise, it is the *CorrMM* convolution that will be used
         "caffe style convolution".
 
@@ -522,6 +524,7 @@ def bilinear_upsampling(input,
     # first and last col
     concat_mat = T.concatenate((concat_mat[:, :, :, :1], concat_mat,
                                 concat_mat[:, :, :, -1:]), axis=3)
+    concat_col = col + 2
 
     pad = 2 * ratio - (ratio - 1) // 2 - 1
 
@@ -533,7 +536,8 @@ def bilinear_upsampling(input,
                                                             np.newaxis, :,
                                                             np.newaxis],
                                                input_shape=(up_bs, 1,
-                                                            row * ratio, col),
+                                                            row * ratio,
+                                                            concat_col),
                                                filter_shape=(1, 1, None, 1),
                                                border_mode=(pad, 0),
                                                subsample=(ratio, 1),
@@ -563,7 +567,7 @@ def bilinear_upsampling(input,
                                                subsample=(ratio, ratio),
                                                filter_flip=True)
 
-    return upsampled_mat.reshape((batch_size, num_input_channels,
+    return upsampled_mat.reshape((input.shape[0], input.shape[1],
                                   row * ratio, col * ratio))
 
 

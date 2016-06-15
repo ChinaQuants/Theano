@@ -3,7 +3,7 @@ Defines Linkers that deal with C implementations.
 
 """
 
-from __future__ import print_function
+from __future__ import absolute_import, print_function, division
 
 # Python imports
 from copy import copy
@@ -1228,10 +1228,6 @@ class CLinker(link.Linker):
         of theano.config (for all config options where "in_c_key" is True).
         It is followed by elements for every node in the topological ordering
         of `self.fgraph`.
-
-        If the Op of any Apply in the FunctionGraph does not have
-        c_code_cache_ok()==True, then this function raises a KeyError
-        exception.
 
         Input Signature
         ---------------

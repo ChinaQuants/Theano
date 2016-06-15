@@ -12,6 +12,7 @@ fast_compile, we register them as needed for the GPU. This can be
 revisited later when all the intermediate part are on the GPU.
 
 """
+from __future__ import absolute_import, print_function, division
 import logging
 import numpy
 from six.moves import xrange
@@ -19,10 +20,10 @@ from six.moves import xrange
 import theano
 from theano import gof
 from theano import scalar
-from theano.tensor import basic as tensor, subtensor, opt
+from theano.gof.opt import copy_stack_trace
+from theano.tensor import basic as tensor, subtensor, opt, elemwise
 from theano.tensor.type import (values_eq_approx_remove_inf,
                                 values_eq_approx_remove_nan)
-from theano.tensor.opt import copy_stack_trace
 from theano.compile import optdb
 from theano.gof import Apply
 
@@ -904,9 +905,11 @@ def softmax_simplifier(numerators, denominators):
                                 matching_denom = denominator
                                 break
         if matching_denom:
+            softmax = softmax_op(x)
+            copy_stack_trace(numerator, softmax)
             numerators.remove(numerator)
             denominators.remove(matching_denom)
-            numerators.append(softmax_op(x))
+            numerators.append(softmax)
 
     return numerators, denominators
 opt.local_mul_canonizer.add_simplifier(softmax_simplifier, 'softmax_simplifier')
@@ -2219,6 +2222,10 @@ def relu(x, alpha=0):
     if alpha == 0:
         return 0.5 * (x + abs(x))
     else:
+        # We can't use 0.5 and 1 for one and half.  as if alpha is a
+        # numpy dtype, they will be considered as float64, so would
+        # cause upcast to float64.
+        alpha = tensor.as_tensor_variable(alpha)
         f1 = 0.5 * (1 + alpha)
         f2 = 0.5 * (1 - alpha)
         return f1 * x + f2 * abs(x)
@@ -2365,3 +2372,38 @@ def elu(x, alpha=1):
         Exponential Linear Units (ELUs)" <http://arxiv.org/abs/1511.07289>`.
     """
     return tensor.switch(x > 0, x, alpha * (tensor.exp(x) - 1))
+
+
+class ScalarSoftsign(theano.scalar.UnaryScalarOp):
+    """
+    Softsign activation function
+    :math:`\\varphi(\\mathbf{x}) = \\frac{1}{1+|x|}`
+
+    """
+    @staticmethod
+    def static_impl(x):
+        return x / (1.0 + abs(x))
+
+    def impl(self, x):
+        return ScalarSoftsign.static_impl(x)
+
+    def grad(self, inp, grads):
+        x, = inp
+        gz, = grads
+        if 'float' in x.type.dtype:
+            d = (1.0 + abs(x))
+            return [gz / (d * d)]
+        else:
+            return NotImplemented
+
+    def c_code(self, node, name, inp, out, sub):
+        x, = inp
+        z, = out
+        if node.inputs[0].type in [theano.scalar.float32,
+                                   theano.scalar.float64]:
+            return "%(z)s = %(x)s / (1.0+fabs(%(x)s));" % locals()
+        raise NotImplementedError('only floating point x is implemented')
+
+scalar_softsign = ScalarSoftsign(theano.scalar.upgrade_to_float,
+                                 name='scalar_softsign')
+softsign = elemwise.Elemwise(scalar_softsign, name='softsign')

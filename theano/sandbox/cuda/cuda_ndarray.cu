@@ -2219,7 +2219,7 @@ static PyNumberMethods CudaNdarrayNumberMethods =
     0,  //binaryfunc nb_floor_divide;          __floordiv__
     0,  //binaryfunc nb_true_divide;           __truediv__
     0,  //binaryfunc nb_inplace_floor_divide;  __ifloordiv__
-    0,  //binaryfunc nb_inplace_true_divide;   __itruediv__
+    (binaryfunc)CudaNdarray_inplace_div,  //binaryfunc nb_inplace_true_divide;   __itruediv__
 
 #if PY_MINOR_VERSION > 4
     /* Added in release 2.5 */
@@ -3800,9 +3800,11 @@ CudaNdarray_CopyFromArray(CudaNdarray * self, PyArrayObject*obj)
     {
         PyErr_Format(PyExc_RuntimeError,
                      "Cuda error '%s' while copying %lli data element"
-                     " to device memory",
+                     " to device memory. str ptr=%p. dst ptr=%p",
                      cudaGetErrorString(cerr),
-                     (long long)py_src_size);
+                     (long long)py_src_size,
+                     py_src_data,
+                     self->devdata);
         Py_DECREF(py_src);
         return -1;
     }
@@ -4069,7 +4071,16 @@ int CudaNdarray_CopyFromCudaNdarray(CudaNdarray * self,
             }; break;
         default:
             {
-                assert (cudaSuccess == cudaGetLastError());
+                cudaError_t err = cudaGetLastError();
+                if(cudaSuccess != err){
+                    PyErr_Format(PyExc_RuntimeError,
+                                 "Unexpected Cuda error: %s: %s\n",
+                                 "CudaNdarray_CopyFromCudaNdarray",
+                                 cudaGetErrorString(err));
+                    Py_XDECREF(new_other);
+                    return -1;
+                }
+
                 if (verbose)
                     fprintf(stderr,
                             "Copying with default version unbroadcast=%d\n",
@@ -4092,7 +4103,7 @@ int CudaNdarray_CopyFromCudaNdarray(CudaNdarray * self,
                         CudaNdarray_DEV_DATA(self),
                         (const int *)CudaNdarray_DEV_STRIDES(self));
                 CNDA_THREAD_SYNC;
-                cudaError_t err = cudaGetLastError();
+                err = cudaGetLastError();
                 if(verbose>1)
                     fprintf(stderr,
                             "INFO k_elemwise_unary_rowmaj (n_blocks=%i,"
