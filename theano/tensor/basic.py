@@ -463,8 +463,8 @@ if int(config.tensor.cmp_sloppy) > 1:
     # When config.tensor.cmp_sloppy>1 we are even more sloppy. This is
     # useful to test the GPU as they don't use extended precision and
     # this cause some difference bigger then the normal sloppy.
-    float16_atol = 5e-3
-    float16_rtol = 1e-2
+    float16_atol = 1e-2
+    float16_rtol = 5e-2
 
     float32_atol = 5e-4
     float32_rtol = 1e-3
@@ -472,8 +472,8 @@ if int(config.tensor.cmp_sloppy) > 1:
     float64_rtol = 1e-4
     float64_atol = 1e-3
 elif int(config.tensor.cmp_sloppy):
-    float16_atol = 1e-3
-    float16_rtol = 5e-3
+    float16_atol = 5e-3
+    float16_rtol = 1e-2
 
     float32_atol = 1e-4
     float32_rtol = 1e-3
@@ -483,8 +483,8 @@ elif int(config.tensor.cmp_sloppy):
 else:
     # If you change those value in test don't forget to put them back
     # when the test end.  Don't forget the case when the test fail.
-    float16_atol = 5e-4
-    float16_rtol = 5e-4
+    float16_atol = 1e-3
+    float16_rtol = 1e-3
 
     float32_atol = 1e-5
     float32_rtol = 1e-5
@@ -555,7 +555,7 @@ def numpy_scalar(data):
     # handle case where data is numpy.array([])
     if (data.ndim > 0 and
         (len(data.shape) == 0 or
-         __builtins__['max'](data.shape) == 0)):
+         builtins.max(data.shape) == 0)):
         assert numpy.all(numpy.array([]) == data)
         raise EmptyConstantError()
     try:
@@ -630,9 +630,15 @@ def get_scalar_constant_value(orig_v, elemwise=True,
                 v = v.owner.inputs[0]
                 continue
             elif isinstance(v.owner.op, theano.compile.ops.Shape_i):
-                if isinstance(v.owner.inputs[0], Constant):
-                    return numpy.asarray(
-                        v.owner.inputs[0].data.shape[v.owner.op.i])
+                i = v.owner.op.i
+                inp = v.owner.inputs[0]
+                if isinstance(inp, Constant):
+                    return numpy.asarray(inp.data.shape[i])
+                # The shape of a broadcastable dimension is 1
+                if (hasattr(inp.type, 'broadcastable') and
+                        inp.type.broadcastable[i]):
+                    return numpy.asarray(1)
+
             # Don't act as the constant_folding optimization here as this
             # fct is used too early in the optimization phase.  This would
             # mess with the stabilization optimization and be too slow.
@@ -2265,7 +2271,17 @@ pprint.assign(fill, printing.FunctionPrinter('fill'))
 
 @constructor
 def ones_like(model, dtype=None):
-    """equivalent of numpy.ones_like"""
+    """equivalent of numpy.ones_like
+    Parameters
+    ----------
+    model : tensor
+    dtype : data-type, optional
+
+    Returns
+    -------
+    tensor
+        tensor the shape of model containing ones of the type of dtype.
+    """
     if dtype is None:
         dtype = model.type.dtype
     ret = fill(model, constant(1.0, dtype=dtype))
@@ -2274,7 +2290,18 @@ def ones_like(model, dtype=None):
 
 @constructor
 def zeros_like(model, dtype=None):
-    """equivalent of numpy.zeros_like"""
+    """equivalent of numpy.zeros_like
+    Parameters
+    ----------
+    model : tensor
+    dtype : data-type, optional
+
+    Returns
+    -------
+    tensor
+        tensor the shape of model containing zeros of the type of dtype.
+    """
+
     if dtype is None:
         dtype = model.type.dtype
     return fill(model, constant(0.0, dtype=dtype))
@@ -2669,15 +2696,18 @@ class Alloc(gof.Op):
         sh = [as_tensor_variable(s) for s in shape]
         bcast = []
         for i, s in enumerate(sh):
-            if config.exception_verbosity == 'high':
-                s_as_str = '\n' + min_informative_str(s)
-            else:
-                s_as_str = str(s)
+            def err_str():
+                if config.exception_verbosity == 'high':
+                    return '\n' + min_informative_str(s)
+                else:
+                    return str(s)
             if s.type.dtype[:3] not in ('int', 'uin'):
+                s_as_str = err_str()
                 raise TypeError('Shape arguments to Alloc must be integers, '
                                 'but argument %s is not for apply node: %s' %
                                 (i, s_as_str))
             if s.ndim != 0:
+                s_as_str = err_str()
                 raise TypeError(
                     "Each shape dimension to Alloc must be a scalar, ",
                     'but dimension %s have %d dimensions for apply node: %s' %
@@ -2750,13 +2780,14 @@ class Alloc(gof.Op):
             }
 
             // This function takes care of broadcasting
-            PyArray_CopyInto(%(zz)s, %(vv)s);
+            if (PyArray_CopyInto(%(zz)s, %(vv)s) == -1)
+              %(fail)s
             """ % dict(vv=vv, ndim=ndim, zz=zz, fail=fail)
 
         return code
 
     def c_code_cache_version(self):
-        return (1,)
+        return (2,)
 
     def infer_shape(self, node, input_shapes):
         return [node.inputs[1:]]
@@ -4016,6 +4047,11 @@ def roll(x, shift, axis=None):
             return roll(y, shift, axis=0).reshape(x.shape)
         else:
             axis = 0
+
+    # Shift may be larger than the size of the axis. If so, since the
+    # roll operation is cyclic, we can take the shift modulo the size
+    # of the axis
+    shift = shift % x.shape[axis]
 
     # A slice of all elements in a dimension ':'
     allslice = slice(None)

@@ -539,6 +539,8 @@ def makeTester(name, op, expected, checks=None, good=None, bad_build=None,
                     assert None not in in_grad_vars
 
     Checker.__name__ = name
+    if hasattr(Checker, '__qualname__'):
+        Checker.__qualname__ = name
     return Checker
 
 
@@ -3732,6 +3734,22 @@ class T_Join_and_Split(unittest.TestCase):
             # Test rolling on default axis with ndim > 1
             want = numpy.roll(a.get_value(borrow=True), 2)
             b = roll(a, get_shift(2))
+            out = theano.function([], b)()
+
+            assert (out == want).all()
+
+            # Test rolling on axis 0 with a positive shift that is
+            # larger than axis size
+            want = numpy.roll(a.get_value(borrow=True), 4, 0)
+            b = roll(a, get_shift(4), 0)
+            out = theano.function([], b)()
+
+            assert (out == want).all()
+
+            # Test rolling on axis 0 with a negative shift that is
+            # larger than axis size
+            want = numpy.roll(a.get_value(borrow=True), -4, 0)
+            b = roll(a, get_shift(-4), 0)
             out = theano.function([], b)()
 
             assert (out == want).all()
@@ -7003,6 +7021,9 @@ class T_get_scalar_constant_value(unittest.TestCase):
         assert get_scalar_constant_value(s) == 3
         s = opt.Shape_i(1)(c)
         assert get_scalar_constant_value(s) == 4
+        d = theano.shared(numpy.random.randn(1,1), broadcastable=(True, True))
+        f = theano.tensor.basic.ScalarFromTensor()(opt.Shape_i(0)(d))
+        assert get_scalar_constant_value(f) == 1
 
     def test_elemwise(self):
         # We test only for a few elemwise, the list of all supported
