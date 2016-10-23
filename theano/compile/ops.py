@@ -5,6 +5,7 @@ help make new Ops more rapidly.
 
 """
 from __future__ import absolute_import, print_function, division
+from collections import OrderedDict
 
 import copy
 import six.moves.cPickle as pickle
@@ -12,7 +13,6 @@ import warnings
 
 import theano
 from theano import gof
-from theano.compat import OrderedDict
 from six import iteritems, integer_types
 from six.moves import xrange
 
@@ -402,6 +402,14 @@ class Shape_i(gof.Op):
     def infer_shape(self, node, input_shapes):
         return [()]
 
+    def connection_pattern(self, node):
+        # the grad returns the gradient with respect to the
+        # elements of a tensor variable
+        # the elements of the tensor variable do not participate
+        # in the computation of the shape, so they are not really
+        # part of the graph
+        return [[False]]
+
     def grad(self, inp, grads):
         return [theano.gradient.grad_not_implemented(
                 op=self, x_pos=0, x=inp[0],
@@ -437,12 +445,12 @@ def shape_i(var, i, fgraph=None):
         shape_of = shape_feature.shape_of
 
         def recur(node):
-            if not hasattr(node.outputs[0], 'fgraph'):
+            if not node.outputs[0] in shape_of:
                 for inp in node.inputs:
                     if inp.owner:
                         recur(inp.owner)
                 # If the output var isn't marked as being in the graph,
-                # we need to att it in the ShapeFeature.
+                # we need to add it in the ShapeFeature.
                 shape_feature.on_import(fgraph, node,
                                         'gof.ops.shape_i')
         if var not in shape_of:
@@ -453,6 +461,14 @@ def shape_i(var, i, fgraph=None):
     # Shape_i in the graph. Otherwise, the shape feature optimization
     # won't get applied.
     return var.shape[i]
+
+
+def shape_i_op(i):
+    key = i
+    if key not in shape_i_op.cache:
+        shape_i_op.cache[key] = Shape_i(i)
+    return shape_i_op.cache[key]
+shape_i_op.cache = {}
 
 
 def register_shape_i_c_code(typ, code, check_input, version=()):

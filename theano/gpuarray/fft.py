@@ -9,7 +9,7 @@ from theano.gradient import DisconnectedType
 from theano.gpuarray import (basic_ops, GpuArrayType)
 
 import theano.tensor.fft
-from .opt import register_opt, op_lifter
+from .opt import register_opt, op_lifter, register_opt2
 
 try:
     import pygpu
@@ -73,7 +73,7 @@ class CuRFFTOp(Op):
 
         return theano.Apply(self, [inp, s], [self.output_type(inp)()])
 
-    def make_thunk(self, node, storage_map, _, _2):
+    def make_thunk(self, node, storage_map, _, _2, impl=None):
 
         inputs = [storage_map[v] for v in node.inputs]
         outputs = [storage_map[v] for v in node.outputs]
@@ -198,7 +198,7 @@ class CuIRFFTOp(Op):
 
         return theano.Apply(self, [inp, s], [self.output_type(inp)()])
 
-    def make_thunk(self, node, storage_map, _, _2):
+    def make_thunk(self, node, storage_map, _, _2, impl=None):
 
         inputs = [storage_map[v] for v in node.inputs]
         outputs = [storage_map[v] for v in node.outputs]
@@ -373,10 +373,12 @@ def _unitary(norm):
 if scikits_cuda_available:
     @register_opt('fast_compile')
     @op_lifter([theano.tensor.fft.RFFTOp])
-    def local_curfft_op(node, context_name):
+    @register_opt2([theano.tensor.fft.RFFTOp], 'fast_compile')
+    def local_gpua_curfft_op(op, ctx_name, inputs, outputs):
         return curfft_op
 
     @register_opt('fast_compile')
     @op_lifter([theano.tensor.fft.IRFFTOp])
-    def local_cuirfft_op(node, context_name):
+    @register_opt2([theano.tensor.fft.IRFFTOp], 'fast_compile')
+    def local_gpua_cuirfft_op(op, ctx_name, inputs, outputs):
         return cuirfft_op

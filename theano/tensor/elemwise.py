@@ -73,8 +73,7 @@ class DimShuffle(Op):
         list can either be an index or 'x'. Indices must be encoded
         as python integers, not theano symbolic integers.
     inplace : bool, optional
-        If True, the output will be a view of the input.
-        If False (default), the output will be a copy of the input.
+        If True (default), the output will be a view of the input.
 
     Note
     ----
@@ -134,13 +133,17 @@ class DimShuffle(Op):
 
     _f16_ok = True
     check_input = False
+    __props__ = ("input_broadcastable", "new_order", "inplace")
 
-    def __init__(self, input_broadcastable, new_order, inplace=False):
+    def __init__(self, input_broadcastable, new_order, inplace=True):
         input_broadcastable = tuple(input_broadcastable)
         self.input_broadcastable = input_broadcastable
         new_order = tuple(new_order)
         self.new_order = new_order
-        self.inplace = inplace
+        if inplace is True:
+            self.inplace = inplace
+        else:
+            raise ValueError("DimShuffle is inplace by default and hence the inplace for DimShuffle must be true")
 
         for i, j in enumerate(new_order):
             if j != 'x':
@@ -186,17 +189,6 @@ class DimShuffle(Op):
         if self.inplace:
             self.view_map = {0: [0]}
 
-        self._rehash()
-
-    def __getstate__(self):
-        d = dict(self.__dict__)
-        del d['_hashval']
-        return d
-
-    def __setstate__(self, d):
-        self.__dict__.update(d)
-        self._rehash()
-
     def make_node(self, _input):
         input = as_tensor_variable(_input)
         ib = tuple(input.type.broadcastable)
@@ -226,23 +218,6 @@ class DimShuffle(Op):
                             broadcastable=ob)()
 
         return Apply(self, [input], [output])
-
-    def __eq__(self, other):
-        # it's probably not necessary to compare input_broadcastable
-        return type(self) == type(other) \
-            and self.inplace == other.inplace \
-            and self.new_order == other.new_order \
-            and self.input_broadcastable == other.input_broadcastable
-
-    def _rehash(self):
-        self._hashval = (hash(type(self).__name__) ^
-                         hash(type(self).__module__) ^
-                         hash(self.inplace) ^
-                         hash(self.new_order) ^
-                         hash(self.input_broadcastable))
-
-    def __hash__(self):
-        return self._hashval
 
     def __str__(self):
         if self.inplace:
@@ -446,8 +421,7 @@ class DimShufflePrinter:
         else:
             raise TypeError("Can only print DimShuffle.")
 
-pprint.assign(lambda pstate, r: r.owner and isinstance(r.owner.op, DimShuffle),
-              DimShufflePrinter())
+pprint.assign(DimShuffle, DimShufflePrinter())
 
 
 ################
@@ -544,13 +518,11 @@ second dimension
                                           self.scalar_op.nout)
         self._rehash()
 
-    def make_node(self, *inputs):
+    def get_output_info(self, dim_shuffle, *inputs):
+        """Return the outputs dtype and broadcastable pattern and the
+        dimshuffled niputs.
+
         """
-        If the inputs have different number of dimensions, their shape
-        is left-completed to the greatest number of dimensions with 1s
-        using DimShuffle.
-        """
-        inputs = list(map(as_tensor_variable, inputs))
         shadow = self.scalar_op.make_node(
             *[get_scalar_type(dtype=i.type.dtype).make_variable()
               for i in inputs])
@@ -565,10 +537,9 @@ second dimension
                 args.append(input)
             else:
                 # TODO: use LComplete instead
-                args.append(DimShuffle(
+                args.append(dim_shuffle(
                     input.type.broadcastable,
-                    ['x'] * difference + list(range(length)),
-                    inplace=False)(input))
+                    ['x'] * difference + list(range(length)))(input))
         inputs = args
 
         # HERE: all the broadcast dims have the same length now
@@ -601,7 +572,18 @@ second dimension
             raise TypeError((
                 "Cannot do an inplace operation on incompatible data types.",
                 ([i.type.dtype for i in inputs], out_dtypes, inplace_pattern)))
+        assert len(out_dtypes) == len(out_broadcastables)
+        return out_dtypes, out_broadcastables, inputs
 
+    def make_node(self, *inputs):
+        """
+        If the inputs have different number of dimensions, their shape
+        is left-completed to the greatest number of dimensions with 1s
+        using DimShuffle.
+        """
+        inputs = list(map(as_tensor_variable, inputs))
+        out_dtypes, out_broadcastables, inputs = self.get_output_info(
+            DimShuffle, *inputs)
         outputs = [TensorType(dtype=dtype, broadcastable=broadcastable)()
                    for dtype, broadcastable in izip(out_dtypes,
                                                     out_broadcastables)]
@@ -790,7 +772,8 @@ second dimension
                 # dimensions
                 res = theano.tensor.constant(numpy.asarray(r.data),
                                              dtype=r.type.dtype)
-                return DimShuffle((), ['x'] * nd, inplace=False)(res)
+                return DimShuffle((), ['x'] * nd)(res)
+
             new_r = Elemwise(node.op, {})(
                 *[transform(ipt) for ipt in node.inputs])
             return new_r
@@ -804,14 +787,15 @@ second dimension
 
         return ret
 
-    def prepare_node(self, node, storage_map, compute_map):
+    def prepare_node(self, node, storage_map, compute_map, impl):
         # Postpone the ufunc building to the last minutes
         # NumPy ufunc support only up to 31 inputs.
         # But our c code support more.
         if (len(node.inputs) < 32 and
                 (self.nfunc is None or
                  self.scalar_op.nin != len(node.inputs)) and
-                self.ufunc is None):
+                self.ufunc is None and
+                impl == 'py'):
 
             ufunc = numpy.frompyfunc(self.scalar_op.impl,
                                      len(node.inputs),
@@ -840,6 +824,14 @@ second dimension
             char = numpy.sctype2char(out_dtype)
             sig = char * node.nin + '->' + char * node.nout
             node.tag.sig = sig
+        node.tag.fake_node = Apply(
+            self.scalar_op,
+            [get_scalar_type(dtype=input.type.dtype).make_variable()
+             for input in node.inputs],
+            [get_scalar_type(dtype=output.type.dtype).make_variable()
+             for output in node.outputs])
+
+        self.scalar_op.prepare_node(node.tag.fake_node, None, None, impl)
 
     def perform(self, node, inputs, output_storage):
         if len(node.inputs) >= 32:
@@ -899,14 +891,18 @@ second dimension
             # numpy the first (faster) version leads to segfaults
             if self.ufunc:
                 ufunc = self.ufunc
+            elif not hasattr(node.tag, 'ufunc'):
+                # It happen that make_thunk isn't called, like in
+                # get_scalar_constant_value
+                self.prepare_node(node, None, None, 'py')
+                # prepare_node will add ufunc to self or the tag
+                # depending if we can reuse it or not. So we need to
+                # test both again.
+                if self.ufunc:
+                    ufunc = self.ufunc
+                else:
+                    ufunc = node.tag.ufunc
             else:
-                if not hasattr(node.tag, 'ufunc'):
-                    # It happen that make_thunk isn't called, like in
-                    # get_scalar_constant_value
-                    node.tag.ufunc = numpy.frompyfunc(self.scalar_op.impl,
-                                                      len(node.inputs),
-                                                      self.scalar_op.nout)
-
                 ufunc = node.tag.ufunc
 
             nout = ufunc.nout
@@ -982,6 +978,11 @@ second dimension
         return rval
 
     def _c_all(self, node, nodename, inames, onames, sub):
+        # Some ops call directly the Elemwise._c_all or Elemwise.c_code
+        # To not request all of them to call prepare_node(), do it here.
+        # There is no harm if it get called multile time.
+        if not hasattr(node.tag, 'fake_node'):
+            self.prepare_node(node, None, None, 'c')
         _inames = inames
         _onames = onames
 
@@ -1100,11 +1101,7 @@ second dimension
 
         # We generate the C code of the inner loop using the scalar op
         task_code = self.scalar_op.c_code(
-            Apply(self.scalar_op,
-                  [get_scalar_type(dtype=input.type.dtype).make_variable()
-                   for input in node.inputs],
-                  [get_scalar_type(dtype=output.type.dtype).make_variable()
-                   for output in node.outputs]),
+            node.tag.fake_node,
             nodename + '_scalar_',
             ["%s_i" % s for s in _inames],
             ["%s_i" % s for s in onames],

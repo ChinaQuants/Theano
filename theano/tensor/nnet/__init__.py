@@ -17,7 +17,8 @@ from .nnet import (
     graph_merge_softmax_with_crossentropy_softmax, h_softmax,
     logsoftmax, logsoftmax_op, prepend_0_to_each_row, prepend_1_to_each_row,
     prepend_scalar_to_each_row, relu, softmax, softmax_grad, softmax_graph,
-    softmax_op, softmax_simplifier, softmax_with_bias, elu)
+    softmax_op, softmax_simplifier, softmax_with_bias, elu,
+    confusion_matrix)
 from . import opt
 from .conv import ConvOp
 from .Conv3D import *
@@ -31,11 +32,12 @@ from .bn import batch_normalization
 
 import warnings
 from .abstract_conv import conv2d as abstract_conv2d
+from .abstract_conv import conv3d
 
 
 def conv2d(input, filters, input_shape=None, filter_shape=None,
            border_mode='valid', subsample=(1, 1), filter_flip=True,
-           image_shape=None, **kwargs):
+           image_shape=None, filter_dilation=(1, 1), **kwargs):
     """
     This function will build the symbolic graph for convolving a mini-batch of a
     stack of 2D inputs with a set of 2D filters. The implementation is modelled
@@ -95,6 +97,10 @@ def conv2d(input, filters, input_shape=None, filter_shape=None,
     image_shape: None, tuple/list of len 4 of int or Constant variable
         Deprecated alias for input_shape.
 
+    filter_dilation: tuple of len 2
+        Factor by which to subsample (stride) the input.
+        Also called dilation elsewhere.
+
     kwargs: Any other keyword arguments are accepted for backwards
             compatibility, but will be ignored.
 
@@ -112,6 +118,9 @@ def conv2d(input, filters, input_shape=None, filter_shape=None,
 
         This is only supported in Theano 0.8 or the development
         version until it is released.
+
+        The parameter filter_dilation is an implementation of `dilated
+        convolution <https://arxiv.org/pdf/1511.07122v3.pdf>`_.
 
     """
 
@@ -140,4 +149,5 @@ def conv2d(input, filters, input_shape=None, filter_shape=None,
                              " be provided at the same time.")
 
     return abstract_conv2d(input, filters, input_shape, filter_shape,
-                           border_mode, subsample, filter_flip)
+                           border_mode, subsample, filter_flip,
+                           filter_dilation)
