@@ -246,18 +246,14 @@ class GpuOp(theano.gof.Op):
 
     """
 
-    def make_thunk(self, node, storage_map, compute_map, no_recycling):
+    def prepare_node(self, node, storage_map, compute_map, impl):
         if use.device_number is None:
             use("gpu",
                 force=True,
                 default_to_move_computation_to_gpu=False,
                 move_shared_float32_to_gpu=False,
                 enable_cuda=False)
-        return super(GpuOp, self).make_thunk(node, storage_map,
-                                             compute_map, no_recycling)
 
-theano.compile.debugmode.default_make_thunk.append(
-    get_unbound_function(GpuOp.make_thunk))
 
 # We must do those import to be able to create the full doc when
 # nvcc is not available
@@ -299,14 +295,17 @@ def dnn_available():
                   return 1;
                 }
                 """)
-            params = ["-l", "cudnn", "-I" + os.path.dirname(__file__)]
+            # to support path that includes spaces, we need to wrap it with double quotes on Windows
+            path_wrapper = "\"" if os.name =='nt' else ""
+            params = ["-l", "cudnn"]
+            params.extend(['-I%s%s%s' % (path_wrapper, os.path.dirname(__file__), path_wrapper)])
             if config.dnn.include_path:
-                params.append("-I" + config.dnn.include_path)
+                params.extend(['-I%s%s%s' % (path_wrapper, config.dnn.include_path, path_wrapper)])
             if config.dnn.library_path:
-                params.append("-L" + config.dnn.library_path)
+                params.extend(['-L%s%s%s' % (path_wrapper, config.dnn.library_path, path_wrapper)])
             if config.nvcc.compiler_bindir:
                 params.extend(['--compiler-bindir',
-                               config.nvcc.compiler_bindir])
+                               '%s%s%s' % (path_wrapper, config.nvcc.compiler_bindir, path_wrapper)])
             params.extend([flag for flag in config.nvcc.flags.split(' ') if flag])
 
             # Do not run here the test program. It would run on the
@@ -531,6 +530,15 @@ def use(device,
         # No successful call to use() has been made yet
         if device != 'gpu' and device < 0:
             return
+        msg = ("Theano flag device=gpu* (old gpu back-end) only support"
+               " floatX=float32. You have floatX=%s. Use the new gpu"
+               " back-end with device=cuda* for that value of floatX." %
+               config.floatX)
+
+        if config.floatX == 'float16':
+            raise RuntimeError(msg)
+        elif config.floatX == 'float64':
+            warnings.warn(msg)
 
         # Has PyCUDA already initialized the GPU context
         pycuda_init_dev = False
